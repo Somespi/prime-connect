@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+    <title>SPIKE Hub Web Controller</title>
+
+    <style>
+        body {
+            font-family: Arial;
+            margin: 40px;
+        }
+
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+        }
+
+        #log {
+            background: #111;
+            color: #0f0;
+            padding: 15px;
+            height: 350px;
+            overflow: auto;
+            white-space: pre-wrap;
+        }
+    </style>
+
+</head>
+
+
+<body>
+
+
+    <h1>SPIKE Hub Controller</h1>
+
+
+    <button id="connect">
+        Connect Hub
+    </button>
+
+
+    <button id="factory">
+        Factory Mode
+    </button>
+
+
+    <button id="controller">
+        Controller Mode
+    </button>
+
+
+    <br><br>
+
+
+    <h3>Console</h3>
+
+
+    <div id="log"></div>
+
+
+
+    <script>
+
+
+        let port = null;
+        let writer = null;
+
+
+
+        function log(msg) {
+
+            let box =
+                document.getElementById("log");
+
+
+            box.textContent += msg + "\n";
+
+            box.scrollTop =
+                box.scrollHeight;
+
+        }
+
+
+
+
+
+        function sleep(ms) {
+
+            return new Promise(
+                resolve => setTimeout(resolve, ms)
+            );
+
+        }
+
+
+
+
+
+
+
+        async function connectHub() {
+
+
+            try {
+
+
+                port =
+                    await navigator.serial.requestPort();
+
+
+
+                await port.open({
+
+                    baudRate: 115200
+
+                });
+
+
+
+                writer =
+                    port.writable.getWriter();
+
+
+
+                log(
+                    "Connected"
+                );
+
+                await sendRaw(
+                    new Uint8Array([3])
+                );
+                await sleep(500);
+                startReader();
+
+            }
+
+            catch (e) {
+
+                log(
+                    "ERROR: " + e
+                );
+
+            }
+
+
+        }
+
+
+
+
+
+
+
+
+        async function startReader() {
+
+
+            const reader =
+                port.readable.getReader();
+
+
+
+            while (true) {
+
+
+                try {
+
+
+                    const {
+                        value,
+                        done
+                    }
+                        =
+                        await reader.read();
+
+
+
+                    if (done)
+                        break;
+
+
+
+                    if (value) {
+
+                        log(
+                            new TextDecoder()
+                                .decode(value)
+                        );
+
+                    }
+
+
+                }
+
+                catch (e) {
+
+                    break;
+
+                }
+
+
+            }
+
+
+        }
+
+
+
+
+
+
+
+
+        async function sendRaw(data) {
+
+
+            if (!writer) {
+
+                log(
+                    "Not connected"
+                );
+
+                return;
+
+            }
+
+
+
+            await writer.write(data);
+
+        }
+
+
+
+
+
+
+
+
+
+        //
+        // Normal command
+        // Sends CTRL+C first
+        //
+
+        async function send(command, delay = 0.2) {
+
+
+            log(
+                ">>> " + command
+            );
+
+
+
+            await sendRaw(
+
+                new TextEncoder()
+                    .encode(
+                        command + "\r\n"
+                    )
+
+            );
+
+
+
+            await sleep(
+                delay * 500
+            );
+
+
+        }
+
+
+
+
+
+        function escapeString(text) {
+
+            return text
+                .replaceAll("\\", "\\\\")
+                .replaceAll('"', '\\"')
+                .replaceAll("\n", "\\n");
+        }
+
+
+
+
+
+
+
+
+
+        async function factoryMode() {
+
+
+
+            log(
+                "=== FACTORY MODE ==="
+            );
+
+
+
+            await send(
+                "import hub"
+            );
+
+
+
+            await send(
+                'f=open("boot.py","w")'
+            );
+
+
+
+            let boot =
+                `import micropython, hub
+micropython.alloc_emergency_exception_buf(128)
+hub.config["hub_os_handle_bluetooth"] = True
+hub.config["hub_os_enable"] = True
+hub.config["hub_os_auto_advertise"] = True
+`;
+
+
+
+            boot =
+                escapeString(boot);
+
+
+
+            await send(
+                `f.write("${boot}")`
+            );
+
+
+
+            await send(
+                "f.close()"
+            );
+
+
+
+            await send(
+                "import machine"
+            );
+
+
+
+            await send(
+                "machine.reset()",
+                2
+            );
+
+
+
+            log(
+                "Factory mode complete"
+            );
+
+
+        }
+
+
+
+
+
+
+
+
+
+        async function controllerMode() {
+
+
+
+            log(
+                "=== CONTROLLER MODE ==="
+            );
+
+
+
+            await send(
+                "import hub"
+            );
+
+
+
+            await send(
+                'f=open("boot.py","w")'
+            );
+
+
+
+            let boot =
+                `import micropython, hub
+micropython.alloc_emergency_exception_buf(128)
+hub.config["hub_os_handle_bluetooth"] = False
+hub.config["hub_os_enable"] = False
+`;
+
+
+
+            boot =
+                escapeString(boot);
+
+
+
+            await send(
+                `f.write("${boot}")`
+            );
+
+
+
+            await send(
+                "f.close()"
+            );
+
+            await uploadMain();
+
+
+
+        }
+
+
+
+
+
+
+
+
+
+        async function uploadMain() {
+
+            let code =
+String.raw`
+import hub
+from hub import port
+import motor
+import runloop
+import bluetooth
+import struct
+import os
+import machine
+
+MIN_VOLTAGE = 6500
+MAX_VOLTAGE = 8400
+
+VALID_PORTS = {
+    "A": port.A,
+    "B": port.B,
+    "C": port.C,
+    "D": port.D,
+    "E": port.E,
+    "F": port.F
+}
+
+def get_port(port_str):
+    if port_str not in VALID_PORTS:
+        raise Exception("INVALID PORT")
+    return VALID_PORTS[port_str]
+
+
+class BLEUART:
+    _UART_UUID = bluetooth.UUID("6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
+    _RX_UUID = bluetooth.UUID("6E400002-B5A3-F393-E0A9-E50E24DCCA9E")
+    _TX_UUID = bluetooth.UUID("6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
+
+    def __init__(self, name="SPIKE Hub"):
+        self._ble = bluetooth.BLE()
+        self._ble.active(True)
+        self._ble.irq(self._irq)
+
+        self._service = (
+            self._UART_UUID,
+            (
+                (self._RX_UUID, bluetooth.FLAG_WRITE | bluetooth.FLAG_WRITE_NO_RESPONSE),
+                (self._TX_UUID, bluetooth.FLAG_READ | bluetooth.FLAG_NOTIFY),
+            ),
+        )
+        ((self._rx_handle, self._tx_handle),) = self._ble.gatts_register_services((self._service,))
+
+        self._conn_handle = None
+        self._rx_buffer = bytearray()
+        self._write_callback = None
+
+        self._advertise(name)
+
+    def _irq(self, event, data):
+        if event == 1:
+            conn_handle, _, _ = data
+            self._conn_handle = conn_handle
+            print("BLE Connected")
+        elif event == 2:
+            self._conn_handle = None
+            print("BLE Disconnected")
+            self._advertise()
+        elif event == 3:
+            conn_handle, value_handle = data
+            if conn_handle == self._conn_handle and value_handle == self._rx_handle:
+                incoming = self._ble.gatts_read(self._rx_handle)
+                print("BLE RX raw:", incoming, "| callback armed:", self._write_callback is not None)
+                self._rx_buffer.extend(incoming)
+                if self._write_callback:
+                    try:
+                        self._write_callback()
+                    except Exception as e:
+                        import traceback
+                        print("write_callback ERROR:", e)
+                        traceback.print_exc()
+
+    def _advertise(self, name="SPIKE"):
+        payload = bytearray(b"\x02\x01\x06")
+        payload.append(len(name) + 1)
+        payload.append(0x09)
+        payload.extend(name.encode())
+        self._ble.gap_advertise(100000, payload)
+
+    def any(self):
+        return len(self._rx_buffer) > 0
+
+    def read_line(self):
+        # Look for \r or \n delimiter without consuming the buffer if not found.
+        idx_n = self._rx_buffer.find(b"\n")
+        idx_r = self._rx_buffer.find(b"\r")
+        
+        if idx_n == -1 and idx_r == -1:
+            # No delimiter found, don't touch the buffer
+            return None
+        
+        # Pick whichever delimiter comes first
+        if idx_n == -1:
+            idx = idx_r
+        elif idx_r == -1:
+            idx = idx_n
+        else:
+            idx = min(idx_n, idx_r)
+        
+        # Extract and remove the line from the buffer
+        line = bytes(self._rx_buffer[:idx])
+        self._rx_buffer = self._rx_buffer[idx + 1:]
+        
+        try:
+            return line.decode().strip()
+        except UnicodeError:
+            return None
+
+    def take_all(self):
+        # Grab everything currently in the buffer without waiting for a delimiter.
+        if len(self._rx_buffer) == 0:
+            print(">>> buffer is empty in take_all")
+            return None
+        
+        raw = bytes(self._rx_buffer)
+        self._rx_buffer = bytearray()
+        print(">>> take_all got bytes:", repr(raw))
+        try:
+            decoded = raw.decode().strip()
+            print(">>> take_all decoded to:", repr(decoded))
+            return decoded
+        except Exception as e:
+            print(">>> take_all decode failed:", type(e).__name__, e)
+            return None
+
+    def write(self, data):
+        if self._conn_handle is not None:
+            try:
+                self._ble.gatts_write(self._tx_handle, data.encode())
+                self._ble.gatts_notify(self._conn_handle, self._tx_handle)
+            except Exception as e:
+                print("BLE write failed:", e)
+
+
+try:
+    name = hub.info()["name"]
+except:
+    name = "SPIKE_Hub"
+ble_channel = BLEUART(name=name)
+
+
+def reply(value):
+    msg = str(value)
+    print(msg)
+    ble_channel.write(msg + "\n")
+
+
+def cmd_run(args):
+    p = get_port(args[0])
+    speed = int(args[1])
+    motor.run(p, speed)
+
+async def cmd_one(args):
+    p = get_port(args[0])
+    speed = int(args[1])
+    degrees = int(args[2])
+    await motor.run_for_degrees(p, degrees, speed)
+
+async def cmd_both(args):
+    p1 = get_port(args[0])
+    p2 = get_port(args[1])
+    speed = int(args[2])
+    degrees = int(args[3])
+    motor.run_for_degrees(p1, degrees, speed)
+    await motor.run_for_degrees(p2, degrees, speed)
+
+async def cmd_goto(args):
+    p = get_port(args[0])
+    speed = int(args[1])
+    angle = int(args[2])
+    await motor.run_to_position(p, angle, speed)
+
+def cmd_stop(args):
+    motor.stop(get_port(args[0]))
+
+def cmd_reset(args):
+    motor.reset_relative_position(get_port(args[0]), 0)
+
+def cmd_pos(args):
+    reply(motor.relative_position(get_port(args[0])))
+
+def cmd_speed(args):
+    reply(motor.velocity(get_port(args[0])))
+
+
+def cmd_get_name(args):
+    try:
+        reply(hub.info()["name"])
+    except Exception as e:
+        reply("ERR " + str(e))
+
+def cmd_get_battery(args):
+    try:
+        from hub import battery
+        percent = battery.capacity_left()
+        reply("{:.0f}%".format(percent))
+    except Exception as e:
+        reply("ERR " + str(e))
+
+
+async def cmd_reset_to_factory(args):
+    # Factory reset: restore LEGO OS control by rewriting boot.py with
+    # hub_os_enable = True, then reboot.
+    reply("Resetting to factory, rebooting...")
+
+    try:
+        # Write boot.py to restore hub OS
+        f = open("boot.py", "w")
+        boot_code = (
+            "import micropython, hub\n"
+            "micropython.alloc_emergency_exception_buf(128)\n"
+            'hub.config["hub_os_handle_bluetooth"] = True\n'
+            'hub.config["hub_os_enable"] = True\n'
+            'hub.config["hub_os_auto_advertise"] = True\n'
+        )
+        f.write(boot_code)
+        f.close()
+        print("boot.py restored")
+    except Exception as e:
+        reply("ERR Failed to restore boot.py: " + str(e))
+        return
+
+    # Give the BLE notify a moment to go out before we reset
+    await runloop.sleep_ms(500)
+    
+    try:
+        machine.reset()
+    except Exception as e:
+        reply("ERR Reset failed: " + str(e))
+
+
+COMMANDS = {
+    "run": cmd_run,
+    "one": cmd_one,
+    "both": cmd_both,
+    "goto": cmd_goto,
+    "stop": cmd_stop,
+    "reset": cmd_reset,
+    "pos": cmd_pos,
+    "speed": cmd_speed,
+    "getName": cmd_get_name,
+    "getBattery": cmd_get_battery,
+    "resetToFactory": cmd_reset_to_factory,
+}
+
+
+async def main():
+    print("Motor controller ready with BLE")
+
+    cmd_queue = []
+    def on_ble_rx():
+        print(">>> on_ble_rx called")
+        # First, drain any complete newline-terminated lines (covers
+        # scripted clients that send several commands in one write, or
+        # stream multiple lines across writes).
+        got_delimited = False
+        while True:
+            line = ble_channel.read_line()
+            print(">>> read_line returned:", repr(line))
+            if line is None:
+                break
+            got_delimited = True
+            print("CMD:", line)
+            if line:
+                cmd_queue.append(line)
+
+        print(">>> got_delimited =", got_delimited)
+        # If nothing was newline-delimited, treat whatever's left in the
+        # buffer as one complete command. This is what most BLE terminal
+        # apps (nRF Connect, LightBlue) actually send: one message per
+        # "Write" tap, with no trailing \n.
+        if not got_delimited:
+            text = ble_channel.take_all()
+            print(">>> take_all returned:", repr(text))
+            if text:
+                print("CMD:", text)
+                cmd_queue.append(text)
+        print(">>> on_ble_rx done")
+
+    ble_channel._write_callback = on_ble_rx
+
+    while True:
+        await runloop.sleep_ms(10)
+        if cmd_queue:
+            line = cmd_queue.pop(0)
+            parts = line.strip().split()
+            if len(parts) == 0:
+                continue
+
+            command = parts[0]
+            args = parts[1:]
+
+            if command in COMMANDS:
+                func = COMMANDS[command]
+                try:
+                    if hasattr(func, "__code__") and (func.__code__.co_flags & 0x80):
+                        await func(args)
+                    else:
+                        func(args)
+                except Exception as e:
+                    reply("ERR Execution failed: " + str(e))
+            else:
+                reply("UNKNOWN")
+
+runloop.run(main())`
+
+            await send(
+                'f=open("main.py","w")'
+            );
+
+
+
+            let chunkSize = 200;
+
+
+
+            for (
+                let i = 0;
+                i < code.length;
+                i += chunkSize
+            ) {
+
+
+                let chunk =
+                    code.substring(
+                        i,
+                        i + chunkSize
+                    );
+
+
+
+                chunk =
+                    escapeString(chunk);
+
+
+
+                await send(
+
+                    `f.write("${chunk}")`
+
+                );
+
+
+            }
+
+
+
+            await send(
+                "f.close()"
+            );
+
+
+
+            log(
+                "Upload complete"
+            );
+
+
+
+            await send(
+                "import machine"
+            );
+
+
+
+            await send(
+                "machine.reset()",
+                3
+            );
+
+
+        }
+
+
+
+
+
+
+
+
+
+        document
+            .getElementById("connect")
+            .onclick =
+            connectHub;
+
+
+
+        document
+            .getElementById("factory")
+            .onclick =
+            factoryMode;
+
+
+
+        document
+            .getElementById("controller")
+            .onclick =
+            controllerMode;
+
+
+
+    </script>
+
+
+</body>
+
+</html>
