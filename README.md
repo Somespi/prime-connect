@@ -1,6 +1,8 @@
 # prime-connect
 An unofficial safe method to use BLE in SPIKE Prime Robot without the need to switch to Pybricks or tamper with the firmware!
 
+I've came across this while USB sniffing the SPIKE Prime App via USBPcap. Hope it helps! 
+
 The SPIKE Prime USB communication interface exposes the hub's MicroPython REPL. Through this REPL, it is possible to modify internal hub configuration values:
 
 ```py
