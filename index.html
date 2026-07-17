@@ -518,15 +518,12 @@ class BLEUART:
         return len(self._rx_buffer) > 0
 
     def read_line(self):
-        # Look for \r or \n delimiter without consuming the buffer if not found.
         idx_n = self._rx_buffer.find(b"\n")
         idx_r = self._rx_buffer.find(b"\r")
         
         if idx_n == -1 and idx_r == -1:
-            # No delimiter found, don't touch the buffer
             return None
         
-        # Pick whichever delimiter comes first
         if idx_n == -1:
             idx = idx_r
         elif idx_r == -1:
@@ -534,7 +531,6 @@ class BLEUART:
         else:
             idx = min(idx_n, idx_r)
         
-        # Extract and remove the line from the buffer
         line = bytes(self._rx_buffer[:idx])
         self._rx_buffer = self._rx_buffer[idx + 1:]
         
@@ -544,7 +540,6 @@ class BLEUART:
             return None
 
     def take_all(self):
-        # Grab everything currently in the buffer without waiting for a delimiter.
         if len(self._rx_buffer) == 0:
             print(">>> buffer is empty in take_all")
             return None
@@ -636,12 +631,9 @@ def cmd_get_battery(args):
 
 
 async def cmd_reset_to_factory(args):
-    # Factory reset: restore LEGO OS control by rewriting boot.py with
-    # hub_os_enable = True, then reboot.
     reply("Resetting to factory, rebooting...")
 
     try:
-        # Write boot.py to restore hub OS
         f = open("boot.py", "w")
         boot_code = (
             "import micropython, hub\n"
@@ -657,7 +649,6 @@ async def cmd_reset_to_factory(args):
         reply("ERR Failed to restore boot.py: " + str(e))
         return
 
-    # Give the BLE notify a moment to go out before we reset
     await runloop.sleep_ms(500)
     
     try:
@@ -687,9 +678,6 @@ async def main():
     cmd_queue = []
     def on_ble_rx():
         print(">>> on_ble_rx called")
-        # First, drain any complete newline-terminated lines (covers
-        # scripted clients that send several commands in one write, or
-        # stream multiple lines across writes).
         got_delimited = False
         while True:
             line = ble_channel.read_line()
@@ -702,10 +690,6 @@ async def main():
                 cmd_queue.append(line)
 
         print(">>> got_delimited =", got_delimited)
-        # If nothing was newline-delimited, treat whatever's left in the
-        # buffer as one complete command. This is what most BLE terminal
-        # apps (nRF Connect, LightBlue) actually send: one message per
-        # "Write" tap, with no trailing \n.
         if not got_delimited:
             text = ble_channel.take_all()
             print(">>> take_all returned:", repr(text))
