@@ -582,6 +582,12 @@ def cmd_run(args):
     speed = int(args[1])
     motor.run(p, speed)
 
+async def cmd_rotate(args):
+    p = get_port(args[0])
+    degrees = int(args[1])
+    speed = int(args[2])
+    await motor.run_for_degrees(p, degrees, speed)
+
 async def cmd_one(args):
     p = get_port(args[0])
     speed = int(args[1])
@@ -659,6 +665,7 @@ async def cmd_reset_to_factory(args):
 
 COMMANDS = {
     "run": cmd_run,
+    "rotate": cmd_rotate,
     "one": cmd_one,
     "both": cmd_both,
     "goto": cmd_goto,
