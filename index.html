@@ -440,6 +440,7 @@ import bluetooth
 import struct
 import os
 import machine
+import motor_pair
 
 MIN_VOLTAGE = 6500
 MAX_VOLTAGE = 8400
@@ -582,6 +583,18 @@ def cmd_run(args):
     speed = int(args[1])
     motor.run(p, speed)
 
+def cmd_pair(args):
+    left = get_port(args[0])
+    right = get_port(args[1])
+
+    motor_pair.pair(
+        motor_pair.PAIR_1,
+        left,
+        right
+    )
+
+    reply("PAIRED " + args[0] + " " + args[1])
+
 async def cmd_rotate(args):
     p = get_port(args[0])
     degrees = int(args[1])
@@ -607,6 +620,16 @@ async def cmd_goto(args):
     speed = int(args[1])
     angle = int(args[2])
     await motor.run_to_position(p, angle, speed)
+
+def cmd_drive(args):
+    steering = int(args[0])
+    velocity = int(args[1])
+
+    motor_pair.move(
+        motor_pair.PAIR_1,
+        steering,
+        velocity=velocity
+    )
 
 def cmd_stop(args):
     motor.stop(get_port(args[0]))
@@ -666,12 +689,14 @@ async def cmd_reset_to_factory(args):
 COMMANDS = {
     "run": cmd_run,
     "rotate": cmd_rotate,
+    "pair": cmd_pair,
     "one": cmd_one,
     "both": cmd_both,
     "goto": cmd_goto,
     "stop": cmd_stop,
     "reset": cmd_reset,
     "pos": cmd_pos,
+    "drive": cmd_drive,
     "speed": cmd_speed,
     "getName": cmd_get_name,
     "getBattery": cmd_get_battery,
